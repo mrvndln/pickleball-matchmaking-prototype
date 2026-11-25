@@ -44,6 +44,7 @@ h1 { font-size: clamp(24px, 3vw, 31px); letter-spacing: -1.2px; line-height: 1.1
 .page-heading p, .muted { color: var(--muted); font-size: 11px; line-height: 1.65; margin: 0; }
 .button { display: inline-flex; justify-content: center; align-items: center; gap: 7px; border: 1px solid var(--line); border-radius: 7px; padding: 10px 13px; font-size: 11px; font-weight: 700; transition: .15s; }
 .button:hover { transform: translateY(-1px); }
+.button:disabled { opacity: .5; cursor: not-allowed; transform: none; }
 .button-primary { color: #19271e; background: var(--lime); border-color: var(--lime); }
 .button-light { color: var(--ink); background: white; }
 .button-small { padding: 7px 10px; font-size: 10px; }
@@ -69,6 +70,14 @@ h1 { font-size: clamp(24px, 3vw, 31px); letter-spacing: -1.2px; line-height: 1.1
 .team b { display: block; color: var(--muted); font-size: 9px; margin-bottom: 5px; }
 .team span { display: block; overflow-wrap: anywhere; font-size: 11px; font-weight: 700; line-height: 1.7; }
 .versus { text-align: center; color: #98a398; font-size: 9px; font-weight: 900; }
+.match-score { display: grid; grid-template-columns: 1fr 20px 1fr; align-items: center; gap: 8px; margin-top: 10px; text-align: center; }
+.match-score > div { display: flex; align-items: center; justify-content: center; gap: 9px; }
+.match-score > div > span { color: var(--muted); font-size: 8px; font-weight: 800; }
+.match-score > div > strong { min-width: 22px; font-size: 20px; }
+.match-score > b { color: var(--muted); }
+.live-score { color: var(--lime); font-size: 18px; letter-spacing: 1px; }
+.match-elapsed { margin-top: 8px; color: #526b2a; font-size: 9px; font-weight: 800; text-align: center; }
+.live-elapsed { color: var(--lime); font-size: 10px; }
 .match-actions { display: flex; gap: 7px; margin-top: 10px; }
 .winner-note { margin-top: 9px; font-size: 10px; color: var(--muted); }
 .winner-note strong { color: var(--ink); }
@@ -112,6 +121,15 @@ td { padding: 12px; border-top: 1px solid var(--line); }
 .live-match:last-child { border: 0; }
 .live-match small { color: var(--lime); font-size: 9px; }
 .live-match span, .live-empty { color: #aebdb1; font-size: 9px; }
+.live-result { margin-top: 14px; padding: 14px 16px; border: 1px solid #c8f16970; border-radius: 9px; background: #c8f16912; }
+.live-result-heading { color: var(--lime); font-size: 9px; font-weight: 800; letter-spacing: 1px; }
+.live-result-teams { display: grid; grid-template-columns: 1fr 22px 1fr; align-items: center; gap: 12px; margin-top: 10px; text-align: center; }
+.live-result-teams > div { display: grid; gap: 5px; }
+.live-result-teams > div > strong { font-size: 14px; }
+.live-result-teams > div > span, .live-result-teams > b { color: #aebdb1; font-size: 10px; }
+.live-result-teams > .live-result-winner > strong, .live-result-teams > .live-result-winner > span { color: var(--lime); }
+.live-result > p { margin: 11px 0 0; color: #d7e0d8; font-size: 10px; text-align: center; }
+.live-result > p > strong { color: var(--lime); }
 .live-footer { display: flex; justify-content: space-between; gap: 10px; margin-top: 18px; color: #aebdb1; font-size: 9px; letter-spacing: .5px; }
 .footer { border-top: 1px solid var(--line); padding: 15px 28px; color: #9aa59c; font-size: 9px; letter-spacing: 1px; }
 .footer span { color: #c8f169; padding: 0 5px; }

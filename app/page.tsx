@@ -1,15 +1,20 @@
  "use client";
 
-import { useMemo, useState } from "react";
+ import { useEffect, useMemo, useState } from "react";
 
 type Status = "Queued" | "Ongoing" | "Completed";
+type Team = [string, string];
 type Match = {
   id: number;
   round: number;
-  a: string[];
-  b: string[];
+  a: Team;
+  b: Team;
   status: Status;
+  scoreA: number;
+  scoreB: number;
+  startedAt?: number;
   winner?: "Team A" | "Team B";
+  bracket?: "Winner" | "Loser" | "Final" | "Reset";
 };
 type Page = "overview" | "players" | "matchmaking" | "games" | "queues" | "history" | "display";
 
@@ -17,6 +22,7 @@ const initialPlayers = [
   "Alex Morgan", "Jordan Lee", "Taylor Smith", "Chris Walker",
   "Sam Rivera", "Jamie Chen", "Drew Parker", "Casey Brooks",
   "Riley James", "Avery Scott", "Morgan Blake", "Cameron Reed",
+  "Quinn Bailey", "Skyler Evans", "Parker Ellis", "Rowan Hayes",
 ];
 
 const navItems: { id: Page; label: string; icon: string; group: string }[] = [
@@ -38,32 +44,107 @@ function shuffle<T,>(items: T[]) {
   return result;
 }
 
+function buildOpeningMatches(names: string[], targetRound: number, startId: number) {
+  const shuffled = shuffle([...new Set(names)]);
+  const created: Match[] = [];
+  let id = startId;
+  for (let i = 0; i + 3 < shuffled.length; i += 4) {
+    created.push({
+      id: id++,
+      round: targetRound,
+      a: [shuffled[i], shuffled[i + 1]],
+      b: [shuffled[i + 2], shuffled[i + 3]],
+      status: "Queued",
+      scoreA: 0,
+      scoreB: 0,
+    });
+  }
+  return { created, nextId: id };
+}
+
+function buildBracketMatches(teams: Team[], targetRound: number, startId: number, bracket: Match["bracket"]) {
+  const created: Match[] = [];
+  for (let i = 0; i + 1 < teams.length; i += 2) {
+    created.push({
+      id: startId++,
+      round: targetRound,
+      a: teams[i],
+      b: teams[i + 1],
+      status: "Queued",
+      scoreA: 0,
+      scoreB: 0,
+      bracket,
+    });
+  }
+  return { created, nextId: startId, waiting: teams.slice(created.length * 2) };
+}
+
+function formatElapsedTime(startedAt: number, now: number) {
+  const elapsedSeconds = Math.max(0, Math.floor((now - startedAt) / 1000));
+  const hours = Math.floor(elapsedSeconds / 3600);
+  const minutes = Math.floor((elapsedSeconds % 3600) / 60);
+  const seconds = elapsedSeconds % 60;
+  const clock = [minutes, seconds].map((part) => String(part).padStart(2, "0")).join(":");
+  return hours ? `${String(hours).padStart(2, "0")}:${clock}` : clock;
+}
+
 export default function Home() {
   const [page, setPage] = useState<Page>("overview");
   const [players, setPlayers] = useState(initialPlayers);
   const [matches, setMatches] = useState<Match[]>([]);
   const [nextId, setNextId] = useState(1);
   const [round, setRound] = useState(0);
+  const [waitingWinnerTeams, setWaitingWinnerTeams] = useState<Team[]>([]);
+  const [waitingLoserTeams, setWaitingLoserTeams] = useState<Team[]>([]);
   const [newPlayer, setNewPlayer] = useState("");
   const [search, setSearch] = useState("");
   const [sessionName] = useState("Saturday Open Play");
   const [notice, setNotice] = useState("");
-  const [resultMatch, setResultMatch] = useState<number | null>(null);
-  const [selectedWinner, setSelectedWinner] = useState<"Team A" | "Team B">("Team A");
+  const [lastResultMatchId, setLastResultMatchId] = useState<number | null>(null);
+  const [now, setNow] = useState(() => Date.now());
 
   const activeMatches = matches.filter((m) => m.status !== "Completed");
   const queuedMatches = matches.filter((m) => m.status === "Queued");
   const ongoingMatches = matches.filter((m) => m.status === "Ongoing");
   const completedMatches = matches.filter((m) => m.status === "Completed");
+  const lastResultMatch = matches.find((m) => m.id === lastResultMatchId && m.status === "Completed");
   const busyPlayers = new Set(activeMatches.flatMap((m) => [...m.a, ...m.b]));
   const availablePlayers = players.filter((p) => !busyPlayers.has(p));
 
-  const winnerPlayers = completedMatches.flatMap((m) =>
-    m.winner === "Team A" ? m.a : m.winner === "Team B" ? m.b : []
+  useEffect(() => {
+    if (ongoingMatches.length === 0) return;
+    const timerId = window.setInterval(() => setNow(Date.now()), 1000);
+    return () => window.clearInterval(timerId);
+  }, [ongoingMatches.length]);
+
+  const currentRoundMatches = matches.filter((m) => m.round === round);
+  const roundComplete = currentRoundMatches.length > 0 && currentRoundMatches.every((m) => m.status === "Completed");
+  const completedBracketMatches = currentRoundMatches.filter((m) => m.status === "Completed" && m.bracket !== "Final" && m.bracket !== "Reset");
+  const roundWinnerTeams = completedBracketMatches.filter((m) => m.bracket !== "Loser").flatMap((m) =>
+    m.winner === "Team A" ? [m.a] : m.winner === "Team B" ? [m.b] : []
   );
-  const loserPlayers = completedMatches.flatMap((m) =>
-    m.winner === "Team A" ? m.b : m.winner === "Team B" ? m.a : []
+  const roundLoserBracketWinners = completedBracketMatches.filter((m) => m.bracket === "Loser").flatMap((m) =>
+    m.winner === "Team A" ? [m.a] : m.winner === "Team B" ? [m.b] : []
   );
+  const roundDroppedTeams = completedBracketMatches.filter((m) => m.bracket !== "Loser").flatMap((m) =>
+    m.winner === "Team A" ? [m.b] : m.winner === "Team B" ? [m.a] : []
+  );
+  const winnerTeams = [...waitingWinnerTeams, ...roundWinnerTeams].filter((team) => team.every((p) => players.includes(p)));
+  const loserTeams = [...waitingLoserTeams, ...roundLoserBracketWinners, ...roundDroppedTeams].filter((team) => team.every((p) => players.includes(p)));
+  const winnerQueue = winnerTeams.flat();
+  const loserQueue = loserTeams.flat();
+  const grandFinalReady = roundComplete && winnerTeams.length === 1 && loserTeams.length === 1;
+  const grandFinalMatch = matches.find((m) => m.bracket === "Final");
+  const resetFinalMatch = matches.find((m) => m.bracket === "Reset");
+  const tournamentComplete = resetFinalMatch
+    ? resetFinalMatch.status === "Completed"
+    : grandFinalMatch?.status === "Completed" && grandFinalMatch.winner === "Team A";
+  const decidingMatch = resetFinalMatch ?? grandFinalMatch;
+  const championTeam = tournamentComplete
+    ? decidingMatch?.winner === "Team A" ? decidingMatch.a : decidingMatch?.b
+    : null;
+  const canAdvanceQueues = roundComplete && !tournamentComplete &&
+    (winnerTeams.length >= 2 || loserTeams.length >= 2 || grandFinalReady);
 
   const pageTitle: Record<Page, string> = {
     overview: "Overview",
@@ -92,54 +173,105 @@ export default function Home() {
   function removePlayer(name: string) {
     if (busyPlayers.has(name)) return flash("This player is assigned to an active match.");
     setPlayers((prev) => prev.filter((p) => p !== name));
+    setWaitingWinnerTeams((prev) => prev.filter((team) => !team.includes(name)));
+    setWaitingLoserTeams((prev) => prev.filter((team) => !team.includes(name)));
     flash("Player removed.");
   }
 
-  function createMatches(names: string[], targetRound: number) {
-    const shuffled = shuffle([...new Set(names)]);
-    const created: Match[] = [];
-    let id = nextId;
-    for (let i = 0; i + 3 < shuffled.length; i += 4) {
-      created.push({
-        id: id++,
-        round: targetRound,
-        a: shuffled.slice(i, i + 2),
-        b: shuffled.slice(i + 2, i + 4),
+  function addMatchPoint(matchId: number, scoringTeam: "Team A" | "Team B") {
+    const match = matches.find((item) => item.id === matchId);
+    if (!match || match.status !== "Ongoing") return;
+    const scoreA = match.scoreA + (scoringTeam === "Team A" ? 1 : 0);
+    const scoreB = match.scoreB + (scoringTeam === "Team B" ? 1 : 0);
+    const winner = scoreA >= 11 && scoreA - scoreB >= 2
+      ? "Team A"
+      : scoreB >= 11 && scoreB - scoreA >= 2
+        ? "Team B"
+        : undefined;
+    const updatedMatch: Match = {
+      ...match,
+      scoreA,
+      scoreB,
+      status: winner ? "Completed" : match.status,
+      winner,
+    };
+
+    if (winner) setLastResultMatchId(matchId);
+
+    if (match.bracket === "Final" && winner === "Team B") {
+      const resetMatch: Match = {
+        id: nextId,
+        round: match.round + 1,
+        a: match.a,
+        b: match.b,
         status: "Queued",
-      });
+        scoreA: 0,
+        scoreB: 0,
+        bracket: "Reset",
+      };
+      setMatches((prev) => [...prev.map((item) => item.id === matchId ? updatedMatch : item), resetMatch]);
+      setNextId(nextId + 1);
+      setRound(resetMatch.round);
+      flash("The loser-bracket champion won the grand final. A reset final is required.");
+      return;
     }
-    setNextId(id);
-    setMatches((prev) => [...prev, ...created]);
-    return { count: created.length, waiting: shuffled.length % 4 };
+
+    setMatches((prev) => prev.map((item) => item.id === matchId ? updatedMatch : item));
+  }
+
+  function startMatch(matchId: number) {
+    setMatches((prev) => prev.map((match) =>
+      match.id === matchId && match.status === "Queued"
+        ? { ...match, status: "Ongoing", startedAt: Date.now() }
+        : match
+    ));
+    setLastResultMatchId(null);
   }
 
   function generateInitial() {
+    if (round > 0) return flash("The opening round has started. Use the winner and loser queues for later rounds.");
     if (availablePlayers.length < 4) return flash("At least four available players are required.");
     const nextRound = round + 1;
-    const result = createMatches(availablePlayers, nextRound);
+    const result = buildOpeningMatches(availablePlayers, nextRound, nextId);
+    setNextId(result.nextId);
+    setMatches((prev) => [...prev, ...result.created]);
     setRound(nextRound);
-    flash(`${result.count} match(es) generated. ${result.waiting} player(s) waiting.`);
+    flash(`${result.created.length} random opening match(es) generated. ${availablePlayers.length % 4} player(s) waiting.`);
   }
 
   function advanceQueues() {
-    const winners = [...new Set(winnerPlayers)].filter((p) => availablePlayers.includes(p));
-    const losers = [...new Set(loserPlayers)].filter((p) => availablePlayers.includes(p));
-    if (!winners.length && !losers.length) return flash("Record completed match results first.");
+    if (!currentRoundMatches.length) return flash("Generate the random opening round first.");
+    if (!roundComplete) return flash("Complete every match in this round before generating the next bracket round.");
+    if (tournamentComplete) return flash("The tournament is complete.");
+    if (!canAdvanceQueues) return flash("Not enough players in either outcome pool to create a doubles match.");
     const nextRound = round + 1;
-    const w = createMatches(winners, nextRound);
-    const l = createMatches(losers, nextRound);
-    if (w.count + l.count === 0) return flash("Not enough eligible players to create a new match.");
+    if (grandFinalReady) {
+      const finalMatch: Match = {
+        id: nextId,
+        round: nextRound,
+        a: winnerTeams[0],
+        b: loserTeams[0],
+        status: "Queued",
+        scoreA: 0,
+        scoreB: 0,
+        bracket: "Final",
+      };
+      setMatches((prev) => [...prev, finalMatch]);
+      setNextId(nextId + 1);
+      setWaitingWinnerTeams([]);
+      setWaitingLoserTeams([]);
+      setRound(nextRound);
+      flash("Grand final created: winner-bracket champion vs. loser-bracket champion.");
+      return;
+    }
+    const winners = buildBracketMatches(winnerTeams, nextRound, nextId, "Winner");
+    const losers = buildBracketMatches(loserTeams, nextRound, winners.nextId, "Loser");
+    setMatches((prev) => [...prev, ...winners.created, ...losers.created]);
+    setNextId(losers.nextId);
+    setWaitingWinnerTeams(winners.waiting);
+    setWaitingLoserTeams(losers.waiting);
     setRound(nextRound);
-    flash(`Next round created: ${w.count} winner match(es), ${l.count} loser match(es).`);
-  }
-
-  function saveResult() {
-    if (resultMatch === null) return;
-    setMatches((prev) => prev.map((m) =>
-      m.id === resultMatch ? { ...m, status: "Completed", winner: selectedWinner } : m
-    ));
-    setResultMatch(null);
-    flash("Match result saved.");
+    flash(`Bracket round created: ${winners.created.length} winner match(es), ${losers.created.length} loser match(es). Unmatched players receive a bye.`);
   }
 
   function stat(label: string, value: number, note: string, icon: string) {
@@ -148,16 +280,21 @@ export default function Home() {
 
   function matchCard(match: Match) {
     return <div className="match-card" key={match.id}>
-      <div className="match-top"><span>MATCH {String(match.id).padStart(3, "0")} · ROUND {match.round}</span><span className={`pill ${match.status.toLowerCase()}`}>{match.status}</span></div>
+      <div className="match-top"><span>MATCH {String(match.id).padStart(3, "0")} · ROUND {match.round}{match.bracket === "Final" ? " · GRAND FINAL" : match.bracket === "Reset" ? " · GRAND FINAL RESET" : match.bracket ? ` · ${match.bracket.toUpperCase()} BRACKET` : " · RANDOM OPENING"}</span><span className={`pill ${match.status.toLowerCase()}`}>{match.status}</span></div>
       <div className="teams">
         <div className="team"><b>TEAM A</b>{match.a.map((p) => <span key={p}>{p}</span>)}</div>
         <div className="versus">VS</div>
         <div className="team"><b>TEAM B</b>{match.b.map((p) => <span key={p}>{p}</span>)}</div>
       </div>
-      {match.status === "Completed" && <div className="winner-note">Winner: <strong>{match.winner}</strong></div>}
+      <div className="match-score">
+        <div><span>TEAM A SCORE</span><strong>{match.scoreA}</strong>{match.status === "Ongoing" && <button className="button button-light button-small" onClick={() => addMatchPoint(match.id, "Team A")} aria-label={`Add point to Team A in match ${match.id}`}>+1 point</button>}</div>
+        <b>—</b>
+        <div><span>TEAM B SCORE</span><strong>{match.scoreB}</strong>{match.status === "Ongoing" && <button className="button button-light button-small" onClick={() => addMatchPoint(match.id, "Team B")} aria-label={`Add point to Team B in match ${match.id}`}>+1 point</button>}</div>
+      </div>
+      {match.status === "Ongoing" && match.startedAt !== undefined && <div className="match-elapsed">ELAPSED · {formatElapsedTime(match.startedAt, now)}</div>}
+      {match.status === "Completed" && <div className="winner-note">Winner: <strong>{match.winner}</strong> · Final score {match.scoreA}–{match.scoreB}</div>}
       {match.status !== "Completed" && <div className="match-actions">
-        {match.status === "Queued" && <button className="button button-light button-small" onClick={() => setMatches((prev) => prev.map((m) => m.id === match.id ? { ...m, status: "Ongoing" } : m))}>Start match</button>}
-        {match.status === "Ongoing" && <button className="button button-primary button-small" onClick={() => { setResultMatch(match.id); setSelectedWinner("Team A"); }}>Record result</button>}
+        {match.status === "Queued" && <button className="button button-light button-small" onClick={() => startMatch(match.id)}>Start match</button>}
       </div>}
     </div>;
   }
@@ -168,7 +305,7 @@ export default function Home() {
 
   const content = useMemo(() => {
     if (page === "overview") return <>
-      {heading("SATURDAY OPEN PLAY · SESSION OVERVIEW", "Good game starts here.", "Manage players, create matches, and keep every court moving.", <button className="button button-primary" onClick={generateInitial}>＋ Generate matches</button>)}
+      {heading("SATURDAY OPEN PLAY · SESSION OVERVIEW", "Good game starts here.", "Manage players, create matches, and keep every court moving.", <button className="button button-primary" onClick={generateInitial} disabled={round > 0}>＋ {round ? "Opening round generated" : "Generate matches"}</button>)}
       <div className="stats-grid">
         {stat("REGISTERED PLAYERS", players.length, "Players in this session", "♙")}
         {stat("ACTIVE MATCHES", ongoingMatches.length, "Currently on court", "▣")}
@@ -208,10 +345,10 @@ export default function Home() {
     </>;
 
     if (page === "matchmaking") return <>
-      {heading("MATCH GENERATION", "Random matchmaking", "Create randomized doubles matchups through player distribution.")}
-      <div className="notice">Players are shuffled into teams of two. The system prevents duplicate assignments within the same round. Players left over from an incomplete group remain available.</div>
+      {heading("MATCH GENERATION", "Random opening round", "Start with randomized doubles matchups, then continue through the winner and loser brackets.")}
+      <div className="notice">The opening round randomly assigns available players. In the winner bracket, winners advance and losing teams drop to the loser bracket. In the loser bracket, winners advance and losing teams are eliminated. Doubles partners stay together; unpaired teams receive byes.</div>
       <div className="dashboard-columns">
-        <section className="panel"><div className="panel-heading"><h3>Match generation setup</h3><span>ROUND {round + 1}</span></div><div className="large-number">{availablePlayers.length}</div><p className="muted">Players available for new matches</p><div className="setting-row"><span>Session format</span><strong>Doubles · 2 vs. 2</strong></div><div className="setting-row"><span>Assignment method</span><strong>Random shuffle</strong></div><button className="button button-primary full-button" onClick={generateInitial}>⤨ Generate random matchups</button></section>
+        <section className="panel"><div className="panel-heading"><h3>Match generation setup</h3><span>{round ? `ROUND ${round} · ${roundComplete ? "COMPLETE" : "IN PROGRESS"}` : "ROUND 1"}</span></div><div className="large-number">{availablePlayers.length}</div><p className="muted">Players available for new matches</p><div className="setting-row"><span>Session format</span><strong>Doubles · 2 vs. 2</strong></div><div className="setting-row"><span>Assignment method</span><strong>{round ? "Winner / loser bracket" : "Random shuffle"}</strong></div><button className="button button-primary full-button" onClick={generateInitial} disabled={round > 0}>⤨ {round ? "Opening round generated" : "Generate random matchups"}</button></section>
         <section className="panel"><div className="panel-heading"><h3>Generation summary</h3></div><InfoRow icon="♙" title={`${availablePlayers.length} available players`} detail="Eligible for new matches" /><InfoRow icon="▤" title={`${Math.floor(availablePlayers.length / 4)} possible matches`} detail="Based on groups of four" /><InfoRow icon="◷" title={`${availablePlayers.length % 4} waiting players`} detail="Remaining after full assignments" /></section>
       </div>
       <section className="panel section-gap"><div className="panel-heading"><h3>Current matchups</h3><span>{activeMatches.length} active</span></div>{activeMatches.length ? activeMatches.map(matchCard) : <Empty>No matchups generated yet.</Empty>}</section>
@@ -219,18 +356,21 @@ export default function Home() {
 
     if (page === "games") return <>
       {heading("COURT OPERATIONS", "Game management", "Monitor match status and record match outcomes.")}
+      <div className="notice">Award points with the +1 buttons. A game finishes automatically when a team reaches at least 11 points and leads by 2. There is no game timer.</div>
       <div className="stats-grid">{stat("ONGOING", ongoingMatches.length, "Currently playing", "▣")}{stat("QUEUED", queuedMatches.length, "Waiting to start", "◷")}{stat("COMPLETED", completedMatches.length, "Finished matches", "✓")}{stat("AVAILABLE PLAYERS", availablePlayers.length, "Not assigned", "♙")}</div>
       <section className="panel"><div className="panel-heading"><h3>Match board</h3><span>{matches.length} total matches</span></div>{matches.length ? matches.map(matchCard) : <Empty>No games yet. Generate matches to populate the board.</Empty>}</section>
     </>;
 
     if (page === "queues") return <>
       {heading("AUTOMATED PLAYER ROTATION", "Winner & loser queues", "Review match outcomes and prepare the next round of doubles matchups.")}
-      <div className="notice">Queue progression groups players by match outcome. Winners are paired with winners, and losing players are paired with losing players. Incomplete groups wait until four eligible players are available.</div>
+      {tournamentComplete && championTeam && <div className="notice"><strong>Tournament complete!</strong> Champion: {championTeam[0]} and {championTeam[1]}.</div>}
+      {resetFinalMatch && !tournamentComplete && <div className="notice">The loser-bracket champion won the grand final. Play the reset final to decide the tournament champion.</div>}
+      <div className="notice">After the random opening round, winner-bracket teams that lose drop into the loser bracket. Loser-bracket teams that lose are eliminated. Winners advance within their bracket, and unpaired teams receive byes. The two bracket champions meet in the grand final; if the loser-bracket champion wins, a reset final is played.</div>
       <div className="dashboard-columns">
-        <section className="panel"><div className="panel-heading"><h3>🏆 Winner queue</h3><span>{winnerPlayers.length} players</span></div>{winnerPlayers.length ? winnerPlayers.map((p, i) => <InfoRow key={`${p}-${i}`} icon={String(i + 1)} title={p} detail="Winning team" />) : <Empty>Winning players appear here after results are recorded.</Empty>}</section>
-        <section className="panel"><div className="panel-heading"><h3>↻ Loser queue</h3><span>{loserPlayers.length} players</span></div>{loserPlayers.length ? loserPlayers.map((p, i) => <InfoRow key={`${p}-${i}`} icon={String(i + 1)} title={p} detail="Opposing team" />) : <Empty>Losing players appear here after results are recorded.</Empty>}</section>
+        <section className="panel"><div className="panel-heading"><h3>🏆 Winner queue</h3><span>{winnerQueue.length} players · {winnerTeams.length} teams</span></div>{winnerTeams.length ? winnerTeams.flatMap((team, teamIndex) => team.map((p, playerIndex) => <InfoRow key={`${teamIndex}-${p}`} icon={playerIndex ? "↳" : String(teamIndex + 1)} title={p} detail={waitingWinnerTeams.includes(team) ? "Bye · team carried forward" : `Winner · round ${round}`} />)) : <Empty>Winning teams appear here after round results are recorded.</Empty>}</section>
+        <section className="panel"><div className="panel-heading"><h3>↻ Loser queue</h3><span>{loserQueue.length} players · {loserTeams.length} teams</span></div>{loserTeams.length ? loserTeams.flatMap((team, teamIndex) => team.map((p, playerIndex) => <InfoRow key={`${teamIndex}-${p}`} icon={playerIndex ? "↳" : String(teamIndex + 1)} title={p} detail={waitingLoserTeams.includes(team) ? "Bye · team carried forward" : `Loser · round ${round}`} />)) : <Empty>Losing teams appear here after round results are recorded.</Empty>}</section>
       </div>
-      <section className="panel section-gap"><div className="panel-heading"><h3>Next round generation</h3><span>Automatic pairing</span></div><p className="muted">Generate the next round from completed match outcomes. Each outcome group is shuffled independently; players are not duplicated across active matches.</p><button className="button button-primary" onClick={advanceQueues}>Generate next round from results →</button></section>
+      <section className="panel section-gap"><div className="panel-heading"><h3>{grandFinalReady ? "Grand final" : resetFinalMatch && !tournamentComplete ? "Grand final reset" : tournamentComplete ? "Tournament complete" : "Next round generation"}</h3><span>{tournamentComplete ? "Champion decided" : roundComplete ? "Current round complete" : "Waiting for results"}</span></div><p className="muted">{grandFinalReady ? "The winner-bracket champion plays the loser-bracket champion. If the loser-bracket champion wins, a reset final will decide the tournament." : resetFinalMatch && !tournamentComplete ? "Play the reset final. The winner of this match is the tournament champion." : tournamentComplete ? "The grand final has been completed." : "Winner-bracket winners advance; their opponents drop to the loser bracket. In the loser bracket, winners advance and losers are eliminated. Teams keep their partners, and unpaired teams receive byes."}</p><button className="button button-primary" onClick={advanceQueues} disabled={!canAdvanceQueues}>{grandFinalReady ? "Create grand final →" : "Generate next bracket round →"}</button>{roundComplete && !canAdvanceQueues && !tournamentComplete && !resetFinalMatch && <p className="muted">No further matches can be formed from these queues.</p>}</section>
     </>;
 
     if (page === "history") return <>
@@ -244,15 +384,30 @@ export default function Home() {
       <section className="live-board" id="live-board">
         <div className="live-header"><div><div className="live-eyebrow">LIVE SESSION</div><h2>COURT FLOW <span>●</span></h2><p>{sessionName} · Doubles Open Play</p></div><span className="live-badge">● LIVE</span></div>
         <div className="live-columns">
-          <div className="live-box"><h3>NOW PLAYING</h3>{ongoingMatches.length ? ongoingMatches.map((m) => <div className="live-match" key={m.id}><small>MATCH {m.id} · ROUND {m.round}</small><strong>{m.a.join(" + ")}</strong><span>VS</span><strong>{m.b.join(" + ")}</strong></div>) : <p className="live-empty">No ongoing matches. Check back shortly.</p>}</div>
-          <div className="live-box"><h3>UP NEXT</h3>{queuedMatches.length ? queuedMatches.map((m) => <div className="live-match" key={m.id}><small>MATCH {m.id}</small><strong>{m.a.join(" + ")}</strong><span>VS</span><strong>{m.b.join(" + ")}</strong></div>) : <p className="live-empty">No upcoming matches in queue.</p>}</div>
+          <div className="live-box"><h3>NOW PLAYING</h3>{ongoingMatches.length ? ongoingMatches.map((m) => <div className="live-match" key={m.id}><small>MATCH {m.id} · ROUND {m.round}</small><strong>{m.a.join(" + ")}</strong><span>VS</span><strong>{m.b.join(" + ")}</strong><strong className="live-score">{m.scoreA} — {m.scoreB}</strong>{m.startedAt !== undefined && <strong className="live-elapsed">PLAYING FOR · {formatElapsedTime(m.startedAt, now)}</strong>}</div>) : <p className="live-empty">No ongoing matches. Check back shortly.</p>}</div>
+          <div className="live-box"><h3>UP NEXT</h3>{queuedMatches.length ? queuedMatches.map((m) => <div className="live-match" key={m.id}><small>MATCH {m.id} · ROUND {m.round}</small><strong>{m.a.join(" + ")}</strong><span>VS</span><strong>{m.b.join(" + ")}</strong><strong className="live-score">0 — 0</strong></div>) : <p className="live-empty">No upcoming matches in queue.</p>}</div>
         </div>
+        {lastResultMatch && <div className="live-result">
+          <div className="live-result-heading">LAST RESULT · MATCH {lastResultMatch.id}</div>
+          <div className="live-result-teams">
+            <div className={lastResultMatch.winner === "Team A" ? "live-result-winner" : ""}>
+              <strong>{lastResultMatch.a.join(" + ")}</strong>
+              <span>Team A · {lastResultMatch.scoreA}</span>
+            </div>
+            <b>—</b>
+            <div className={lastResultMatch.winner === "Team B" ? "live-result-winner" : ""}>
+              <strong>{lastResultMatch.b.join(" + ")}</strong>
+              <span>Team B · {lastResultMatch.scoreB}</span>
+            </div>
+          </div>
+          <p>Winner: <strong>{lastResultMatch.winner === "Team A" ? lastResultMatch.a.join(" + ") : lastResultMatch.b.join(" + ")}</strong></p>
+        </div>}
         <div className="live-footer"><span>PLAY FAIR. PLAY MORE.</span><span>{players.length} REGISTERED PLAYERS · {completedMatches.length} MATCHES COMPLETED</span></div>
       </section>
       <section className="panel section-gap"><div className="panel-heading"><h3>Display information</h3><span>Public view</span></div><p className="muted">This screen is intended for a dedicated TV or monitor. It reflects match status and queue data recorded by the operator.</p></section>
     </>;
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [page, players, matches, round, newPlayer, search, notice]);
+  }, [page, players, matches, round, newPlayer, search, notice, now]);
 
   return <div className="app-shell">
     <aside className="sidebar">
@@ -271,7 +426,6 @@ export default function Home() {
       <footer className="footer">COURT FLOW <span>·</span> PICKLEBALL MATCHMAKING PROTOTYPE</footer>
     </main>
     {notice && <div className="toast">{notice}</div>}
-    {resultMatch !== null && <div className="modal-backdrop"><div className="modal"><div className="eyebrow">MATCH RESULT</div><h2>Record match result</h2><p className="muted">Choose the winning team for Match #{resultMatch}.</p><label className="field-label" htmlFor="winner">WINNING TEAM</label><select id="winner" value={selectedWinner} onChange={(e) => setSelectedWinner(e.target.value as "Team A" | "Team B")}><option value="Team A">Team A</option><option value="Team B">Team B</option></select><div className="modal-actions"><button className="button button-light" onClick={() => setResultMatch(null)}>Cancel</button><button className="button button-primary" onClick={saveResult}>Save result</button></div></div></div>}
   </div>;
 }
 
