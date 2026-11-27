@@ -24,13 +24,14 @@ Open http://localhost:3000.
 - Doubles partners stay together; winner-bracket losses drop to the loser bracket, where a second loss eliminates the team
 - Winner-bracket and loser-bracket champions meet in a grand final, with a reset final if the loser-bracket champion wins
 - Game status management (Queued, Ongoing, Completed)
-- Point-by-point scorekeeping; matches finish at 11 points with a 2-point lead, with no time limit
+- Point-by-point scorekeeping with manual game completion and score correction controls
+- End-game winner is determined by the higher score; tied scores must be resolved before ending
 - Elapsed play-time starts only when an operator starts a match and is shown on the live court screen
 - Winner and loser queue grouping and next-round generation
 - Match history
 - Public live court display with fullscreen support and last result shown until the next game starts
 
-Standard pickleball games are typically played to 11 points and must be won by 2; official rules do not prescribe a fixed number of minutes per game. See the [USA Pickleball rules](https://usapickleball.org/rules/) and [how-to-play guide](https://usapickleball.org/what-is-pickleball/how-to-play/).
+Standard pickleball games are typically played to 11 points and must be won by 2; this prototype leaves game completion to the operator. Official rules do not prescribe a fixed number of minutes per game. See the [USA Pickleball rules](https://usapickleball.org/rules/) and [how-to-play guide](https://usapickleball.org/what-is-pickleball/how-to-play/).
 
 ## Deploy to Vercel
 

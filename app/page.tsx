@@ -13,6 +13,8 @@ type Match = {
   scoreA: number;
   scoreB: number;
   startedAt?: number;
+  completedAt?: number;
+  durationSeconds?: number;
   winner?: "Team A" | "Team B";
   bracket?: "Winner" | "Loser" | "Final" | "Reset";
 };
@@ -86,6 +88,21 @@ function formatElapsedTime(startedAt: number, now: number) {
   const seconds = elapsedSeconds % 60;
   const clock = [minutes, seconds].map((part) => String(part).padStart(2, "0")).join(":");
   return hours ? `${String(hours).padStart(2, "0")}:${clock}` : clock;
+}
+
+function formatDuration(seconds?: number) {
+  if (seconds === undefined) return "—";
+  const hours = Math.floor(seconds / 3600);
+  const minutes = Math.floor((seconds % 3600) / 60);
+  const remainingSeconds = seconds % 60;
+  const clock = [minutes, remainingSeconds].map((part) => String(part).padStart(2, "0")).join(":");
+  return hours ? `${String(hours).padStart(2, "0")}:${clock}` : clock;
+}
+
+function formatFinishedAt(timestamp?: number) {
+  return timestamp === undefined
+    ? "—"
+    : new Date(timestamp).toLocaleTimeString(undefined, { hour: "numeric", minute: "2-digit" });
 }
 
 export default function Home() {
@@ -178,25 +195,34 @@ export default function Home() {
     flash("Player removed.");
   }
 
-  function addMatchPoint(matchId: number, scoringTeam: "Team A" | "Team B") {
+  function changeMatchScore(matchId: number, scoringTeam: "Team A" | "Team B", change: 1 | -1) {
     const match = matches.find((item) => item.id === matchId);
     if (!match || match.status !== "Ongoing") return;
-    const scoreA = match.scoreA + (scoringTeam === "Team A" ? 1 : 0);
-    const scoreB = match.scoreB + (scoringTeam === "Team B" ? 1 : 0);
-    const winner = scoreA >= 11 && scoreA - scoreB >= 2
-      ? "Team A"
-      : scoreB >= 11 && scoreB - scoreA >= 2
-        ? "Team B"
-        : undefined;
+    const score = scoringTeam === "Team A" ? match.scoreA : match.scoreB;
+    const updatedMatch = scoringTeam === "Team A"
+      ? { ...match, scoreA: Math.max(0, score + change) }
+      : { ...match, scoreB: Math.max(0, score + change) };
+    setMatches((prev) => prev.map((item) => item.id === matchId ? updatedMatch : item));
+  }
+
+  function endMatch(matchId: number) {
+    const match = matches.find((item) => item.id === matchId);
+    if (!match || match.status !== "Ongoing") return;
+    if (match.scoreA === match.scoreB) return flash("The score is tied. Add or correct a point before ending the game.");
+
+    const completedAt = Date.now();
+    const winner = match.scoreA > match.scoreB ? "Team A" : "Team B";
     const updatedMatch: Match = {
       ...match,
-      scoreA,
-      scoreB,
-      status: winner ? "Completed" : match.status,
+      status: "Completed",
+      completedAt,
+      durationSeconds: match.startedAt !== undefined
+        ? Math.floor((completedAt - match.startedAt) / 1000)
+        : undefined,
       winner,
     };
 
-    if (winner) setLastResultMatchId(matchId);
+    setLastResultMatchId(matchId);
 
     if (match.bracket === "Final" && winner === "Team B") {
       const resetMatch: Match = {
@@ -287,14 +313,15 @@ export default function Home() {
         <div className="team"><b>TEAM B</b>{match.b.map((p) => <span key={p}>{p}</span>)}</div>
       </div>
       <div className="match-score">
-        <div><span>TEAM A SCORE</span><strong>{match.scoreA}</strong>{match.status === "Ongoing" && <button className="button button-light button-small" onClick={() => addMatchPoint(match.id, "Team A")} aria-label={`Add point to Team A in match ${match.id}`}>+1 point</button>}</div>
+        <div><span>TEAM A SCORE</span><strong>{match.scoreA}</strong>{match.status === "Ongoing" && <><button className="button button-light button-small" onClick={() => changeMatchScore(match.id, "Team A", -1)} disabled={match.scoreA === 0} aria-label={`Remove point from Team A in match ${match.id}`}>−1</button><button className="button button-light button-small" onClick={() => changeMatchScore(match.id, "Team A", 1)} aria-label={`Add point to Team A in match ${match.id}`}>+1</button></>}</div>
         <b>—</b>
-        <div><span>TEAM B SCORE</span><strong>{match.scoreB}</strong>{match.status === "Ongoing" && <button className="button button-light button-small" onClick={() => addMatchPoint(match.id, "Team B")} aria-label={`Add point to Team B in match ${match.id}`}>+1 point</button>}</div>
+        <div><span>TEAM B SCORE</span><strong>{match.scoreB}</strong>{match.status === "Ongoing" && <><button className="button button-light button-small" onClick={() => changeMatchScore(match.id, "Team B", -1)} disabled={match.scoreB === 0} aria-label={`Remove point from Team B in match ${match.id}`}>−1</button><button className="button button-light button-small" onClick={() => changeMatchScore(match.id, "Team B", 1)} aria-label={`Add point to Team B in match ${match.id}`}>+1</button></>}</div>
       </div>
       {match.status === "Ongoing" && match.startedAt !== undefined && <div className="match-elapsed">ELAPSED · {formatElapsedTime(match.startedAt, now)}</div>}
       {match.status === "Completed" && <div className="winner-note">Winner: <strong>{match.winner}</strong> · Final score {match.scoreA}–{match.scoreB}</div>}
       {match.status !== "Completed" && <div className="match-actions">
         {match.status === "Queued" && <button className="button button-light button-small" onClick={() => startMatch(match.id)}>Start match</button>}
+        {match.status === "Ongoing" && <><button className="button button-primary button-small" onClick={() => endMatch(match.id)} disabled={match.scoreA === match.scoreB}>End game</button>{match.scoreA === match.scoreB && <span className="score-hint">Scores can’t be tied.</span>}</>}
       </div>}
     </div>;
   }
@@ -356,7 +383,7 @@ export default function Home() {
 
     if (page === "games") return <>
       {heading("COURT OPERATIONS", "Game management", "Monitor match status and record match outcomes.")}
-      <div className="notice">Award points with the +1 buttons. A game finishes automatically when a team reaches at least 11 points and leads by 2. There is no game timer.</div>
+      <div className="notice">Use +1 to add a point or −1 to correct a scoring mistake. Games do not end automatically; select End game when play is finished. A winner must have a higher score. There is no game timer.</div>
       <div className="stats-grid">{stat("ONGOING", ongoingMatches.length, "Currently playing", "▣")}{stat("QUEUED", queuedMatches.length, "Waiting to start", "◷")}{stat("COMPLETED", completedMatches.length, "Finished matches", "✓")}{stat("AVAILABLE PLAYERS", availablePlayers.length, "Not assigned", "♙")}</div>
       <section className="panel"><div className="panel-heading"><h3>Match board</h3><span>{matches.length} total matches</span></div>{matches.length ? matches.map(matchCard) : <Empty>No games yet. Generate matches to populate the board.</Empty>}</section>
     </>;
@@ -376,7 +403,7 @@ export default function Home() {
     if (page === "history") return <>
       {heading("SESSION RECORDS", "Match history", "Review completed matches and their recorded outcomes.")}
       <section className="panel"><div className="panel-heading"><h3>Completed matches</h3><span>{completedMatches.length} records</span></div>
-        {completedMatches.length ? <div className="table-wrap"><table><thead><tr><th>MATCH</th><th>ROUND</th><th>TEAM A</th><th>TEAM B</th><th>WINNER</th></tr></thead><tbody>{completedMatches.map((m) => <tr key={m.id}><td>#{m.id}</td><td>{m.round}</td><td>{m.a.join(" + ")}</td><td>{m.b.join(" + ")}</td><td><span className="pill completed">{m.winner}</span></td></tr>)}</tbody></table></div> : <Empty>No completed matches to display yet.</Empty>}
+        {completedMatches.length ? <div className="table-wrap"><table><thead><tr><th>MATCH</th><th>ROUND</th><th>BRACKET</th><th>TEAM A</th><th>TEAM B</th><th>FINAL SCORE</th><th>WINNER</th><th>ELAPSED</th><th>FINISHED</th></tr></thead><tbody>{completedMatches.map((m) => <tr key={m.id}><td>#{m.id}</td><td>{m.round}</td><td>{m.bracket ?? "Opening"}</td><td>{m.a.join(" + ")}</td><td>{m.b.join(" + ")}</td><td>{m.scoreA}–{m.scoreB}</td><td><span className="pill completed">{m.winner}</span></td><td>{formatDuration(m.durationSeconds)}</td><td>{formatFinishedAt(m.completedAt)}</td></tr>)}</tbody></table></div> : <Empty>No completed matches to display yet.</Empty>}
       </section>
     </>;
 
